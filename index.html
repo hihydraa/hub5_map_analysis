@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>แผนที่วิเคราะห์สาขาและ Hub</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Sarabun', sans-serif; }
+        
+        /* พื้นที่แสดงแผนที่ */
+        #map { 
+            height: 100vh; 
+            width: 100%; 
+            z-index: 1;
+        }
+
+        /* แผงควบคุม (Filter) */
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 280px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            z-index: 1000;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .control-header {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .section-title {
+            font-weight: bold;
+            margin-top: 15px;
+            margin-bottom: 5px;
+            color: #333;
+            background-color: #f0f0f0;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        .filter-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .filter-item input {
+            margin-right: 10px;
+            cursor: pointer;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            display: inline-block;
+            margin-right: 5px;
+            border-radius: 50%;
+        }
+
+        /* ปรับแต่ง Scrollbar */
+        .control-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        .control-panel::-webkit-scrollbar-thumb {
+            background-color: #ccc;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="control-panel">
+        <div class="control-header">ตัวกรองการแสดงผล</div>
+        
+        <div class="section-title">ส่วนที่ 1: สาขาปัจจุบัน</div>
+        <div id="branch-filters">
+            </div>
+
+        <div class="section-title">ส่วนที่ 2: พื้นที่ Hub (5)</div>
+        <div id="hub-filters">
+            </div>
+        
+        <div style="margin-top: 15px; font-size: 12px; color: #666;">
+            * รัศมีวงกลมแสดงระยะ 80 กม.
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // 1. กำหนดข้อมูล (Data)
+        
+        // ข้อมูลสาขาปัจจุบัน (สีแยกตามสาขา)
+        const currentBranches = [
+            { id: 'b1', name: 'สามทอง', lat: 16.381024824511133, lng: 103.34880709865402, color: 'red' },
+            { id: 'b2', name: 'ขอนแก่น', lat: 16.716002583088173, lng: 103.08203709826033, color: 'blue' },
+            { id: 'b3', name: 'มุกดาหาร', lat: 16.43587856418363, lng: 104.61625951913483, color: 'green' },
+            { id: 'b4', name: 'วานรนิวาส', lat: 17.62930027194879, lng: 103.76764864361519, color: 'purple' }
+        ];
+
+        // ข้อมูล Hub (รูปดาว สีเหลือง)
+        const hubCandidates = [
+            { id: 'h1', name: 'ต.พังขว้าง อ.เมืองสกล', lat: 17.237519902636706, lng: 104.06759106571995 },
+            { id: 'h2', name: 'ต.ห้วยยาง อ.เมืองสกล', lat: 17.125901039363807, lng: 104.05845036308898 },
+            { id: 'h3', name: 'ต.นาแก้ว อ.โพนนาแก้ว', lat: 17.28923447292075, lng: 104.24430222448528 },
+            { id: 'h4', name: 'ต.ขมิ้น อ.เมืองสกล', lat: 17.27360019124107, lng: 103.99561192413172 },
+            { id: 'h5', name: 'ต.นาหัวบ่อ อ.พรรณานิคม', lat: 17.290177481880654, lng: 103.97671788462841 }
+        ];
+
+        // 2. เริ่มต้นแผนที่
+        // ตั้งค่าจุดกึ่งกลางแถวสกลนคร/ขอนแก่น เพื่อให้เห็นภาพรวม
+        const map = L.map('map').setView([17.0, 104.0], 8);
+
+        // เพิ่ม Layer แผนที่ถนน (OpenStreetMap)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        // ตัวแปรเก็บ Layer ทั้งหมดเพื่อใช้ในการ Toggle
+        const layersMap = {};
+
+        // 3. ฟังก์ชันสร้าง Icon รูปดาว (SVG)
+        const starIcon = L.divIcon({
+            className: 'custom-star-icon',
+            html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="gold" stroke="black" stroke-width="1.5" width="30" height="30">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                   </svg>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15], // จุดชี้ตำแหน่งอยู่ตรงกลางดาว
+            popupAnchor: [0, -15]
+        });
+
+        // 4. วาดจุดสาขาปัจจุบัน (Section 1)
+        const branchContainer = document.getElementById('branch-filters');
+
+        currentBranches.forEach(branch => {
+            // สร้าง Marker ปกติ
+            const marker = L.marker([branch.lat, branch.lng])
+                .bindPopup(`<b>${branch.name}</b><br>สาขาปัจจุบัน`);
+
+            // สร้างวงกลมรัศมี 80 กม. (80,000 เมตร)
+            const circle = L.circle([branch.lat, branch.lng], {
+                color: branch.color,
+                fillColor: branch.color,
+                fillOpacity: 0.1, // โปร่งแสงจะได้เห็นส่วนซ้อนทับ
+                radius: 80000
+            });
+
+            // รวมเป็น LayerGroup
+            const group = L.layerGroup([marker, circle]).addTo(map);
+            layersMap[branch.id] = group;
+
+            // สร้าง Checkbox
+            const div = document.createElement('div');
+            div.className = 'filter-item';
+            div.innerHTML = `
+                <label style="display:flex; align-items:center; cursor:pointer;">
+                    <input type="checkbox" checked onchange="toggleLayer('${branch.id}')">
+                    <span class="legend-color" style="background:${branch.color}"></span>
+                    ${branch.name}
+                </label>
+            `;
+            branchContainer.appendChild(div);
+        });
+
+        // 5. วาดจุด Hub (Section 2)
+        const hubContainer = document.getElementById('hub-filters');
+
+        hubCandidates.forEach(hub => {
+            // สร้าง Marker รูปดาว
+            const marker = L.marker([hub.lat, hub.lng], { icon: starIcon })
+                .bindPopup(`<b>${hub.name}</b><br>Candidate Hub`);
+
+            // สร้างวงกลมรัศมี 80 กม. สีเหลือง
+            const circle = L.circle([hub.lat, hub.lng], {
+                color: '#FFD700', // สีทอง/เหลืองเข้ม
+                fillColor: '#FFD700',
+                fillOpacity: 0.15,
+                weight: 2, // เส้นขอบหนาหน่อย
+                radius: 80000
+            });
+
+            // รวมเป็น LayerGroup
+            const group = L.layerGroup([marker, circle]).addTo(map);
+            layersMap[hub.id] = group;
+
+            // สร้าง Checkbox
+            const div = document.createElement('div');
+            div.className = 'filter-item';
+            div.innerHTML = `
+                <label style="display:flex; align-items:center; cursor:pointer;">
+                    <input type="checkbox" checked onchange="toggleLayer('${hub.id}')">
+                    <span class="legend-color" style="background:#FFD700; border:1px solid #999;"></span>
+                    ${hub.name}
+                </label>
+            `;
+            hubContainer.appendChild(div);
+        });
+
+        // ฟังก์ชันเปิด/ปิด Layer
+        function toggleLayer(id) {
+            if (map.hasLayer(layersMap[id])) {
+                map.removeLayer(layersMap[id]);
+            } else {
+                map.addLayer(layersMap[id]);
+            }
+        }
+
+    </script>
+</body>
+</html>
